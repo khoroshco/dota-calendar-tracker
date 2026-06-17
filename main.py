@@ -132,6 +132,28 @@ def run_steam(cfg):
     print(f"[steam] playtime_forever = {forever} мин = {fmt_hm(forever)} (Dota 2, с idle)")
 
 
+def run_dump(cfg):
+    """Диагностика: печатает сырой iCal текущего недельного события с сервера."""
+    require(cfg, ["APPLE_ID", "APPLE_APP_PASSWORD", "ICLOUD_CALENDAR_NAME"])
+    from caldav_sink import get_calendar, _find_by_uid
+
+    st = state_mod.load_state()
+    uid = st.get("current_week_event_uid")
+    if not uid:
+        print("[dump] нет current_week_event_uid в state — сначала прогон settle")
+        return
+    cal = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
+    ev = _find_by_uid(cal, uid)
+    if ev is None:
+        print(f"[dump] событие {uid} не найдено на сервере")
+        return
+    raw = ev.data
+    raw = raw.decode() if isinstance(raw, bytes) else raw
+    print(f"[dump] RAW iCal для {uid}:")
+    for line in raw.splitlines():
+        print(f"[dump] | {line}")
+
+
 def _healthcheck_ping(cfg):
     url = cfg.get("HEALTHCHECK_URL")
     if not url:
@@ -245,7 +267,7 @@ def run_live(cfg):
 
 def parse_args(argv):
     p = argparse.ArgumentParser(description="Dota 2 → Apple Calendar tracker")
-    p.add_argument("--mode", choices=["settle", "live", "test", "steam"], default=None,
+    p.add_argument("--mode", choices=["settle", "live", "test", "steam", "dump"], default=None,
                    help="Принудительный режим. Иначе: INPUT_MODE / GITHUB_SCHEDULE.")
     return p.parse_args(argv)
 
@@ -265,6 +287,8 @@ def main(argv=None):
         run_live(cfg)
     elif mode == "steam":
         run_steam(cfg)
+    elif mode == "dump":
+        run_dump(cfg)
     else:
         raise SystemExit(f"[fatal] неизвестный режим: {mode}")
 
