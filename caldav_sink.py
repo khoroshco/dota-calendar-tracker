@@ -100,7 +100,7 @@ def _read_sequence(event):
 
 def _build_vcalendar(uid, summary, sunday, transparent, *, sequence):
     from datetime import datetime, timedelta, timezone
-    from icalendar import Calendar, Event
+    from icalendar import Alarm, Calendar, Event
 
     cal = Calendar()
     cal.add("prodid", "-//dota-calendar-tracker//EN")
@@ -114,5 +114,15 @@ def _build_vcalendar(uid, summary, sunday, transparent, *, sequence):
     ev.add("dtstamp", datetime.now(timezone.utc))
     ev.add("transp", "TRANSPARENT" if transparent else "OPAQUE")  # free / busy
     ev.add("sequence", sequence)
+
+    # Напоминание в воскресенье 23:00: PT23H от начала all-day дня (00:00) = 23:00
+    # по локальному времени зрителя. Явный VALARM перекрывает дефолтный 09:00-алерт,
+    # который Apple Calendar сам вешает на all-day события без напоминаний.
+    alarm = Alarm()
+    alarm.add("action", "DISPLAY")
+    alarm.add("description", summary)
+    alarm.add("trigger", timedelta(hours=23))
+    ev.add_component(alarm)
+
     cal.add_component(ev)
     return cal.to_ical()

@@ -51,11 +51,11 @@ def uid_for(monday):
 
 def fmt_hm(total_minutes):
     h, m = divmod(max(0, int(total_minutes)), 60)
-    return f"{h}ч {m}м"
+    return f"{h} ч {m} м"
 
 
 def summary_for(minutes):
-    return f"🎮 Dota 2: {fmt_hm(minutes)}"
+    return f"🎮 Dota: {fmt_hm(minutes)}"
 
 
 def utcnow_iso():
