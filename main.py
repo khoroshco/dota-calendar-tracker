@@ -13,6 +13,7 @@
 на голом stdlib, а test-режим не требует caldav.
 """
 import argparse
+import copy
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -166,22 +167,16 @@ def _healthcheck_ping(cfg):
         print(f"[healthcheck] ping не удался (не критично): {e}")
 
 
-def run_settle(cfg):
-    require(cfg, _GAME_SECRETS)
-    from steam import get_playtime_forever
-    from caldav_sink import get_calendar, upsert_event
+def plan_settle(forever, state, today):
+    """Чистая truth-логика settle: (forever, state, today) → (new_state, ops).
 
-    forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
-    print(f"[settle] playtime_forever = {forever} мин")
-
-    st = state_mod.load_state()
-    today = now_msk().date()
-    calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
-
-    if not state_mod.is_initialized(st):
+    ops = [(uid, summary, sunday_date), ...] в порядке применения. Без I/O —
+    отсюда детерминированные тесты (дельта, кламп, ролловер, граница, разрыв).
+    """
+    if not state_mod.is_initialized(state):
         # Первый запуск: сидируем baseline, неделя с нуля, создаём событие.
         mon = monday_of(today)
-        st = {
+        new = {
             "settle_baseline_forever": forever,
             "current_week_monday": mon.isoformat(),
             "current_week_minutes": 0,
@@ -190,23 +185,21 @@ def run_settle(cfg):
             "history": [],
             "last_settle_utc": utcnow_iso(),
         }
-        res = upsert_event(calendar, st["current_week_event_uid"], summary_for(0), sunday_of(mon))
-        print(f"[settle] init: baseline={forever}, неделя={mon.isoformat()}, событие={res}")
-        state_mod.save_state(st)
-        _healthcheck_ping(cfg)
-        return
+        return new, [(new["current_week_event_uid"], summary_for(0), sunday_of(mon))]
+
+    st = copy.deepcopy(state)
+    ops = []
 
     # Игровой день, который только что закрылся в 05:00.
     yesterday = today - timedelta(days=1)
     delta = max(0, forever - st["settle_baseline_forever"])
     st.setdefault("daily", {})[yesterday.isoformat()] = delta
-    print(f"[settle] игровой день {yesterday.isoformat()}: delta={delta} мин")
 
     week_of_yesterday = monday_of(yesterday)
     cur_monday = date.fromisoformat(st["current_week_monday"])
     if week_of_yesterday != cur_monday:
-        # Ролловер: прошлая неделя уже закрыта своей финальной суммой → в history,
-        # начинаем новую неделю (понедельник = сегодня).
+        # Ролловер: прошлая неделя уже закрыта финальной суммой → в history,
+        # начинаем новую (понедельник = сегодня). Дельта вчера уйдёт в новую неделю.
         st.setdefault("history", []).append({
             "week_monday": st["current_week_monday"],
             "minutes": st["current_week_minutes"],
@@ -215,20 +208,53 @@ def run_settle(cfg):
         st["current_week_monday"] = new_mon.isoformat()
         st["current_week_minutes"] = 0
         st["current_week_event_uid"] = uid_for(new_mon)
-        res = upsert_event(calendar, st["current_week_event_uid"], summary_for(0), sunday_of(new_mon))
-        print(f"[settle] ролловер: новая неделя {new_mon.isoformat()} (событие={res}); "
-              f"закрыта {cur_monday.isoformat()} с {st['history'][-1]['minutes']} мин")
+        ops.append((st["current_week_event_uid"], summary_for(0), sunday_of(new_mon)))
 
     st["current_week_minutes"] += delta
     cur_mon = date.fromisoformat(st["current_week_monday"])
-    res = upsert_event(calendar, st["current_week_event_uid"],
-                       summary_for(st["current_week_minutes"]), sunday_of(cur_mon))
-    print(f"[settle] неделя {cur_mon.isoformat()}: {st['current_week_minutes']} мин (событие={res})")
-
+    ops.append((st["current_week_event_uid"], summary_for(st["current_week_minutes"]), sunday_of(cur_mon)))
     st["settle_baseline_forever"] = forever
     st["last_settle_utc"] = utcnow_iso()
-    state_mod.save_state(st)
+    return st, ops
+
+
+def run_settle(cfg):
+    require(cfg, _GAME_SECRETS)
+    from steam import get_playtime_forever
+    from caldav_sink import get_calendar, upsert_event
+
+    forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
+    print(f"[settle] playtime_forever = {forever} мин")
+    st = state_mod.load_state()
+    today = now_msk().date()
+    new_state, ops = plan_settle(forever, st, today)
+
+    calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
+    for uid, summary, sunday in ops:
+        res = upsert_event(calendar, uid, summary, sunday)
+        print(f"[settle] {uid}: '{summary}' -> {res}")
+
+    state_mod.save_state(new_state)
+    print(f"[settle] неделя {new_state['current_week_monday']} = {new_state['current_week_minutes']} мин; "
+          f"baseline={new_state['settle_baseline_forever']}; daily={new_state.get('daily')}")
     _healthcheck_ping(cfg)
+
+
+def plan_live(forever, state, today):
+    """Чистая логика live → (uid, summary, sunday, provisional, delta). Без I/O."""
+    delta = max(0, forever - state["settle_baseline_forever"])
+    today_monday = monday_of(today)
+    if today_monday.isoformat() == state["current_week_monday"]:
+        # Обычный день: провизорно «неделя + сегодня».
+        provisional = state["current_week_minutes"] + delta
+        uid = state["current_week_event_uid"]
+    else:
+        # Граница недели: settle сделает ролловер только завтра в 05:00, но
+        # сегодняшняя игра принадлежит уже НОВОЙ неделе → пишем в её событие
+        # (создастся при необходимости), прошлую неделю не трогаем.
+        provisional = delta
+        uid = uid_for(today_monday)
+    return uid, summary_for(provisional), sunday_of(today_monday), provisional, delta
 
 
 def run_live(cfg):
@@ -242,25 +268,11 @@ def run_live(cfg):
         return
 
     forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
-    delta = max(0, forever - st["settle_baseline_forever"])
     today = now_msk().date()
-    today_monday = monday_of(today)
-
-    if today_monday.isoformat() == st["current_week_monday"]:
-        # Обычный день: провизорно «неделя + сегодня».
-        provisional = st["current_week_minutes"] + delta
-        uid = st["current_week_event_uid"]
-        sunday = sunday_of(today_monday)
-    else:
-        # Граница недели: settle сделает ролловер только завтра в 05:00, но
-        # сегодняшняя игра принадлежит уже НОВОЙ неделе. Пишем в её событие
-        # (создастся при необходимости), прошлую неделю не трогаем.
-        provisional = delta
-        uid = uid_for(today_monday)
-        sunday = sunday_of(today_monday)
+    uid, summary, sunday, provisional, delta = plan_live(forever, st, today)
 
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
-    res = upsert_event(calendar, uid, summary_for(provisional), sunday)
+    res = upsert_event(calendar, uid, summary, sunday)
     print(f"[live] провизорно {provisional} мин (сегодня delta={delta}); событие={res}")
     # baseline и state НЕ трогаем, не коммитим.
 

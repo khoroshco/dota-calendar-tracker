@@ -29,12 +29,13 @@ all-day событие на **воскресенье** текущей недел
 ## Структура
 
 ```
-main.py          # точка входа: --mode settle|live|test
-steam.py         # playtime_forever (appid 570) + ретраи
-caldav_sink.py   # iCloud CalDAV: create/update all-day по UID + ретраи
-alert.py         # Telegram sendMessage (режим test)
-state.py         # чтение/запись state.json
-state.json       # состояние; коммитит только settle
+main.py              # точка входа: --mode settle|live|test|steam|dump
+steam.py             # playtime_forever (appid 570) + ретраи
+caldav_sink.py       # iCloud CalDAV: create/update all-day по UID + ретраи (VALARM вс 23:00)
+alert.py             # Telegram sendMessage (режим test)
+state.py             # чтение/запись state.json
+state.json           # состояние; коммитит только settle
+tests/test_logic.py  # детерминированные тесты truth-логики (без сети/секретов)
 .github/workflows/tracker.yml
 ```
 
@@ -72,13 +73,22 @@ gh secret set TELEGRAM_CHAT_ID
   failure-алерт со ссылкой на run.
 - **Фаза 1/3** — `mode=settle` дважды: появился `state.json`, посчиталась delta.
 - **Фаза 2** — в календаре Gaming появилось all-day событие на воскресенье,
-  заголовок `🎮 Dota 2: Xч Yм`, повтор не плодит дубли.
+  заголовок `🎮 Dota: X ч Y м`, повтор не плодит дубли.
 - **Фаза 4** — `mode=live` вечером обновляет заголовок «с учётом сегодня».
 
 Локально (нужны env-переменные секретов):
 ```bash
 pip install -r requirements.txt
 TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... python main.py --mode test
+```
+
+## Тесты
+
+Детерминированные тесты truth-логики (дельта, кламп при сбросе, ролловер недели,
+граница пн/вт, многодневный разрыв) — без сети и секретов; гоняются и в CI перед
+записью в календарь:
+```bash
+python3 tests/test_logic.py
 ```
 
 ## Edge-кейсы
@@ -102,3 +112,8 @@ TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... python main.py --mode test
 - `HEALTHCHECK_URL` ловит **тихий** дроп расписания (когда джоб вообще не
   стартовал — `if: failure()` такое не поймает). На healthchecks.io настрой алерт
   на отсутствие пинга дольше суток.
+- **Напоминание события** — в iCal зашит VALARM на **воскресенье 23:00** (PT23H от
+  начала all-day дня). ВАЖНО: Apple Calendar доклеивает свой дефолтный алерт для
+  all-day, если в настройках Календаря (вкладка **Alerts**, аккаунт **iCloud** —
+  не «On My Mac»!) «All Day Events» ≠ None. Выстави **None**, иначе будет два
+  напоминания (наше 23:00 + дефолтное 9:00). Это настройка устройства, не сервера.
