@@ -123,6 +123,15 @@ def run_test(cfg):
     print("[test] сообщение отправлено в Telegram")
 
 
+def run_steam(cfg):
+    """Диагностика: тянет playtime_forever и печатает. Нужны только Steam-секреты."""
+    require(cfg, ["STEAM_API_KEY", "STEAM_ID64"])
+    from steam import get_playtime_forever
+
+    forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
+    print(f"[steam] playtime_forever = {forever} мин = {fmt_hm(forever)} (Dota 2, с idle)")
+
+
 def _healthcheck_ping(cfg):
     url = cfg.get("HEALTHCHECK_URL")
     if not url:
@@ -236,7 +245,7 @@ def run_live(cfg):
 
 def parse_args(argv):
     p = argparse.ArgumentParser(description="Dota 2 → Apple Calendar tracker")
-    p.add_argument("--mode", choices=["settle", "live", "test"], default=None,
+    p.add_argument("--mode", choices=["settle", "live", "test", "steam"], default=None,
                    help="Принудительный режим. Иначе: INPUT_MODE / GITHUB_SCHEDULE.")
     return p.parse_args(argv)
 
@@ -254,6 +263,8 @@ def main(argv=None):
         run_settle(cfg)
     elif mode == "live":
         run_live(cfg)
+    elif mode == "steam":
+        run_steam(cfg)
     else:
         raise SystemExit(f"[fatal] неизвестный режим: {mode}")
 
