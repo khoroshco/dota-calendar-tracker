@@ -1,1 +1,9 @@
-{}
+{
+  "current_week_event_uid": "dota-week-2026-06-15@tracker",
+  "current_week_minutes": 0,
+  "current_week_monday": "2026-06-15",
+  "daily": {},
+  "history": [],
+  "last_settle_utc": "2026-06-17T17:57:54Z",
+  "settle_baseline_forever": 404068
+}
