@@ -1,0 +1,68 @@
+name: dota-tracker
+
+on:
+  schedule:
+    - cron: "0 2 * * *"    # settle — 05:00 МСК
+    - cron: "55 17 * * *"  # live   — 20:55 МСК
+    - cron: "55 19 * * *"  # live   — 22:55 МСК
+    - cron: "55 20 * * *"  # live   — 23:55 МСК
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "settle | live | test"
+        default: "test"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dota-tracker-state
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run tracker
+        env:
+          GITHUB_SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          STEAM_API_KEY: ${{ secrets.STEAM_API_KEY }}
+          STEAM_ID64: ${{ secrets.STEAM_ID64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          ICLOUD_CALENDAR_NAME: ${{ secrets.ICLOUD_CALENDAR_NAME }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+        run: python main.py
+
+      - name: Commit state.json (меняет только settle; live — нет)
+        if: success()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- state.json; then
+            echo "state.json не изменился — коммитить нечего (live или no-op)"
+          else
+            git add state.json
+            git commit -m "settle: обновление state.json [skip ci]"
+            git push
+          fi
+
+      - name: Telegram-алерт при падении
+        if: failure()
+        run: |
+          curl -s "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode "text=🔴 Dota tracker упал: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

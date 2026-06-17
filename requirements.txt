@@ -1,0 +1,3 @@
+requests>=2.31,<3
+caldav>=1.3,<2
+icalendar>=5.0,<7
