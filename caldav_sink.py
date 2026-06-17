@@ -116,15 +116,13 @@ def _build_vcalendar(uid, summary, sunday, transparent, *, sequence):
     ev.add("sequence", sequence)
 
     # Напоминание в воскресенье 23:00: PT23H от начала all-day дня (00:00) = 23:00
-    # по локальному времени зрителя. Явный VALARM перекрывает дефолтный 09:00-алерт,
-    # который Apple Calendar сам вешает на all-day события без напоминаний.
+    # по локальному времени зрителя. ВАЖНО: глобальная настройка Apple Calendar
+    # «алерт по умолчанию для all-day» (если не None) доклеивает своё 09:00 поверх —
+    # это лечится только выключением той настройки на устройстве, не из iCal.
     alarm = Alarm()
     alarm.add("action", "DISPLAY")
     alarm.add("description", summary)
     alarm.add("trigger", timedelta(hours=23))
-    # Помечаем как «дефолтный» алерт all-day → Apple Calendar считает слот занятым
-    # и не доклеивает своё напоминание на 09:00 из глобальных настроек.
-    alarm.add("x-apple-default-alarm", "TRUE")
     ev.add_component(alarm)
 
     cal.add_component(ev)
