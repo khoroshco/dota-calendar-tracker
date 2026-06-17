@@ -122,6 +122,9 @@ def _build_vcalendar(uid, summary, sunday, transparent, *, sequence):
     alarm.add("action", "DISPLAY")
     alarm.add("description", summary)
     alarm.add("trigger", timedelta(hours=23))
+    # Помечаем как «дефолтный» алерт all-day → Apple Calendar считает слот занятым
+    # и не доклеивает своё напоминание на 09:00 из глобальных настроек.
+    alarm.add("x-apple-default-alarm", "TRUE")
     ev.add_component(alarm)
 
     cal.add_component(ev)
