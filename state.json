@@ -3,9 +3,10 @@
   "current_week_minutes": 29,
   "current_week_monday": "2026-06-15",
   "daily": {
-    "2026-06-17": 29
+    "2026-06-17": 29,
+    "2026-06-18": 0
   },
   "history": [],
-  "last_settle_utc": "2026-06-18T06:45:37Z",
+  "last_settle_utc": "2026-06-19T06:59:07Z",
   "settle_baseline_forever": 404097
 }
