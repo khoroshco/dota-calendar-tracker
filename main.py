@@ -63,6 +63,21 @@ def utcnow_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _last_settle_date_msk(state):
+    """MSK-дата последнего settle = день текущего открытого игрового окна.
+
+    Live опирается на неё, а НЕ на календарное «сейчас»: игровой день меняется
+    только в момент settle. Иначе live, заехавший за полночь из-за джиттера крона
+    (до утреннего settle), припишет ещё не закрытый игровой день к новой неделе.
+    """
+    iso = state.get("last_settle_utc")
+    try:
+        dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        return dt.astimezone(MSK).date()
+    except (TypeError, ValueError):
+        return now_msk().date()
+
+
 # ---------- конфиг / секреты ----------
 
 def load_config():
@@ -240,21 +255,24 @@ def run_settle(cfg):
     _healthcheck_ping(cfg)
 
 
-def plan_live(forever, state, today):
-    """Чистая логика live → (uid, summary, sunday, provisional, delta). Без I/O."""
+def plan_live(forever, state):
+    """Чистая логика live → (uid, summary, sunday, provisional, delta). Без I/O.
+
+    Якорь недели — дата ПОСЛЕДНЕГО settle (день открытого окна), а не календарное
+    «сегодня»: устойчиво к джиттеру крона (см. _last_settle_date_msk).
+    """
     delta = max(0, forever - state["settle_baseline_forever"])
-    today_monday = monday_of(today)
-    if today_monday.isoformat() == state["current_week_monday"]:
-        # Обычный день: провизорно «неделя + сегодня».
+    open_monday = monday_of(_last_settle_date_msk(state))
+    if open_monday.isoformat() == state["current_week_monday"]:
+        # Обычный случай: открытое окно в текущей неделе → «неделя + сегодня».
         provisional = state["current_week_minutes"] + delta
         uid = state["current_week_event_uid"]
     else:
-        # Граница недели: settle сделает ролловер только завтра в 05:00, но
-        # сегодняшняя игра принадлежит уже НОВОЙ неделе → пишем в её событие
-        # (создастся при необходимости), прошлую неделю не трогаем.
+        # settle ещё не сделал ролловер, но открытое окно уже в новой неделе →
+        # пишем в её событие (создастся), прошлую неделю не трогаем.
         provisional = delta
-        uid = uid_for(today_monday)
-    return uid, summary_for(provisional), sunday_of(today_monday), provisional, delta
+        uid = uid_for(open_monday)
+    return uid, summary_for(provisional), sunday_of(open_monday), provisional, delta
 
 
 def run_live(cfg):
@@ -268,12 +286,11 @@ def run_live(cfg):
         return
 
     forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
-    today = now_msk().date()
-    uid, summary, sunday, provisional, delta = plan_live(forever, st, today)
+    uid, summary, sunday, provisional, delta = plan_live(forever, st)
 
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
     res = upsert_event(calendar, uid, summary, sunday)
-    print(f"[live] провизорно {provisional} мин (сегодня delta={delta}); событие={res}")
+    print(f"[live] {uid}: провизорно {provisional} мин (delta={delta}); событие={res}")
     # baseline и state НЕ трогаем, не коммитим.
 
 

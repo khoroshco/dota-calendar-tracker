@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import main as m  # noqa: E402
 
 
-def _week_state(monday, minutes, baseline=100, daily=None, history=None):
+def _week_state(monday, minutes, baseline=100, daily=None, history=None,
+                last_settle="2026-06-17T06:45:00Z"):
     return {
         "settle_baseline_forever": baseline,
         "current_week_monday": monday,
@@ -20,6 +21,7 @@ def _week_state(monday, minutes, baseline=100, daily=None, history=None):
         "current_week_event_uid": m.uid_for(date.fromisoformat(monday)),
         "daily": daily or {},
         "history": history or [],
+        "last_settle_utc": last_settle,
     }
 
 
@@ -93,7 +95,9 @@ def test_plan_settle_does_not_mutate_input_state():
 # ---------- live ----------
 
 def test_live_midweek_includes_today():
-    uid, summary, sunday, prov, delta = m.plan_live(130, _week_state("2026-06-15", 60), date(2026, 6, 17))
+    # последний settle — ср 17-го (та же неделя 15-го)
+    st = _week_state("2026-06-15", 60, last_settle="2026-06-17T06:45:00Z")
+    uid, summary, sunday, prov, delta = m.plan_live(130, st)
     assert uid == "dota-week-2026-06-15@tracker"
     assert prov == 90 and delta == 30
     assert summary == "🎮 Dota: 1 ч 30 м"
@@ -101,18 +105,31 @@ def test_live_midweek_includes_today():
 
 
 def test_live_monday_boundary_writes_new_week_not_last():
-    # Пн днём, settle ещё не сделал ролловер → сегодня в событие НОВОЙ недели,
-    # прошлые 490 мин в провизорное НЕ попадают.
-    uid, summary, sunday, prov, delta = m.plan_live(130, _week_state("2026-06-15", 490), date(2026, 6, 22))
+    # settle прошёл в пн 22-го (атрибутировал вс, без ролловера) → открытое окно
+    # уже в новой неделе; сегодня → событие вс 28-го, прошлые 490 НЕ попадают.
+    st = _week_state("2026-06-15", 490, last_settle="2026-06-22T07:14:00Z")
+    uid, summary, sunday, prov, delta = m.plan_live(130, st)
     assert uid == "dota-week-2026-06-22@tracker"
     assert prov == 30
     assert summary == "🎮 Dota: 0 ч 30 м"
     assert sunday == date(2026, 6, 28)
 
 
+def test_live_jitter_after_midnight_stays_in_ending_week():
+    # БАГ-регресс: live заехал за полночь (календарно пн 22-го), но утренний
+    # settle ещё НЕ прошёл → последний settle = вс 21-го → открытое окно ещё в
+    # неделе 15-го. Поздняя вс-сессия (57 м) идёт в вс-21, НЕ в новую неделю.
+    st = _week_state("2026-06-15", 121, baseline=404189, last_settle="2026-06-21T06:45:13Z")
+    uid, summary, sunday, prov, delta = m.plan_live(404246, st)
+    assert uid == "dota-week-2026-06-15@tracker"   # прошлая неделя, НЕ june-22
+    assert delta == 57 and prov == 178             # 121 + 57
+    assert sunday == date(2026, 6, 21)
+
+
 def test_live_clamps_negative_delta():
-    uid, summary, sunday, prov, delta = m.plan_live(80, _week_state("2026-06-15", 100, baseline=120), date(2026, 6, 17))
-    assert delta == 0 and prov == 100           # forever<baseline → только неделя
+    st = _week_state("2026-06-15", 100, baseline=120, last_settle="2026-06-17T06:45:00Z")
+    uid, summary, sunday, prov, delta = m.plan_live(80, st)
+    assert delta == 0 and prov == 100              # forever<baseline → только неделя
 
 
 # ---------- формат ----------
