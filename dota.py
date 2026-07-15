@@ -24,7 +24,8 @@ def get_matches(steam_id64, *, days=8, timeout=30, attempts=4):
 
     account_id = account_id_from_steamid64(steam_id64)
     url = f"{_BASE}/players/{account_id}/matches"
-    params = {"date": days}  # OpenDota: матчи за последние N дней
+    # significant=0 обязателен: по умолчанию OpenDota исключает Turbo и event-режимы.
+    params = {"date": days, "significant": 0}
 
     last_err = None
     for attempt in range(1, attempts + 1):
