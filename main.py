@@ -285,19 +285,28 @@ def run_yearfill(cfg):
         b[0] += dur
         b[1] += 1
 
-    if not buckets:
-        print("[yearfill] нет до-трекерных недель с матчами в этом году")
+    # Диапазон: [первый Пн года → последняя до-трекерная неделя]. Идём по ВСЕМ
+    # неделям подряд, чтобы не было пропусков — пустые получают '🎮 Dota (0:00)'.
+    start_monday = monday_of(year_start)
+    if start_monday < year_start:
+        start_monday += timedelta(days=7)
+    end_monday = (date.fromisoformat(first_tracked) - timedelta(days=7)
+                  if first_tracked else monday_of(now_msk().date()))
+    if end_monday < start_monday:
+        print("[yearfill] нет до-трекерных недель в этом году")
         return
 
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
-    for wm_iso in sorted(buckets):
-        wm = date.fromisoformat(wm_iso)
-        sec, cnt = buckets[wm_iso]
+    wm, n = start_monday, 0
+    while wm <= end_monday:
+        sec, cnt = buckets.get(wm.isoformat(), (0, 0))
         dota_min = sec // 60
         summary = f"🎮 Dota ({fmt_hm(dota_min)})"
         res = upsert_event(calendar, uid_for(wm), summary, sunday_of(wm))
-        print(f"[yearfill] {wm_iso}: {dota_min}м ({cnt} матч) → '{summary}' {res}")
-    print(f"[yearfill] недель создано/обновлено: {len(buckets)}")
+        print(f"[yearfill] {wm.isoformat()}: {dota_min}м ({cnt} матч) → '{summary}' {res}")
+        wm += timedelta(days=7)
+        n += 1
+    print(f"[yearfill] недель создано/обновлено: {n} (включая пустые 0:00)")
 
 
 def _healthcheck_ping(cfg):
