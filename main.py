@@ -78,6 +78,12 @@ def _last_settle_date_msk(state):
         return now_msk().date()
 
 
+def _week_start_unix(week_monday):
+    """Unix-время начала недельного окна: понедельник 05:00 МСК."""
+    dt = datetime(week_monday.year, week_monday.month, week_monday.day, 5, 0, 0, tzinfo=MSK)
+    return int(dt.timestamp())
+
+
 # ---------- конфиг / секреты ----------
 
 def load_config():
@@ -168,6 +174,26 @@ def run_dump(cfg):
     print(f"[dump] RAW iCal для {uid}:")
     for line in raw.splitlines():
         print(f"[dump] | {line}")
+
+
+def run_dota(cfg):
+    """Диагностика: время в реальных матчах за текущую неделю (OpenDota)."""
+    require(cfg, ["STEAM_ID64"])
+    from dota import account_id_from_steamid64, get_matches
+
+    st = state_mod.load_state()
+    week_monday = (date.fromisoformat(st["current_week_monday"])
+                   if state_mod.is_initialized(st) else monday_of(now_msk().date()))
+    since = _week_start_unix(week_monday)
+    acc = account_id_from_steamid64(cfg["STEAM_ID64"])
+    matches = get_matches(cfg["STEAM_ID64"], days=8)
+    print(f"[dota] account_id={acc}; матчей за 8 дней: {len(matches)}")
+    wk = [m for m in matches if (m.get("start_time") or 0) >= since]
+    wk_min = sum(m.get("duration", 0) for m in wk) // 60
+    print(f"[dota] с {week_monday.isoformat()} 05:00 МСК: {len(wk)} матч(ей), "
+          f"{wk_min} мин = {fmt_hm(wk_min)}")
+    if not matches:
+        print("[dota] пусто — включи в Dota 2: Settings → Options → 'Expose Public Match Data'")
 
 
 def _healthcheck_ping(cfg):
@@ -296,7 +322,7 @@ def run_live(cfg):
 
 def parse_args(argv):
     p = argparse.ArgumentParser(description="Dota 2 → Apple Calendar tracker")
-    p.add_argument("--mode", choices=["settle", "live", "test", "steam", "dump"], default=None,
+    p.add_argument("--mode", choices=["settle", "live", "test", "steam", "dump", "dota"], default=None,
                    help="Принудительный режим. Иначе: INPUT_MODE / GITHUB_SCHEDULE.")
     return p.parse_args(argv)
 
@@ -318,6 +344,8 @@ def main(argv=None):
         run_steam(cfg)
     elif mode == "dump":
         run_dump(cfg)
+    elif mode == "dota":
+        run_dota(cfg)
     else:
         raise SystemExit(f"[fatal] неизвестный режим: {mode}")
 
