@@ -55,11 +55,11 @@ def fmt_hm(total_minutes):
     return f"{h}:{m:02d}"
 
 
-def summary_for(steam_minutes, dota_minutes=None):
-    """'🎮 Dota 4:40' или '🎮 Dota 4:40 (2:10)'. Скобки — только если есть матчи."""
+def summary_for(steam_minutes, dota_minutes=None, dota_count=0):
+    """'🎮 Dota 4:40' или '🎮 Dota 4:40 (2:10, 18s)' (s = число матчей-сессий)."""
     s = f"🎮 Dota {fmt_hm(steam_minutes)}"
-    if dota_minutes:  # None или 0 → без скобок (пока Dota не отдала матчи)
-        s += f" ({fmt_hm(dota_minutes)})"
+    if dota_count:  # есть матчи → (время в матчах, N сессий)
+        s += f" ({fmt_hm(dota_minutes)}, {dota_count}s)"
     return s
 
 
@@ -242,7 +242,7 @@ def run_backfill(cfg):
         end = _week_start_unix(wm + timedelta(days=7))
         wk = [m for m in matches if start <= (m.get("start_time") or 0) < end]
         dota_min = sum(m.get("duration", 0) for m in wk) // 60
-        summary = summary_for(steam_min, dota_min)
+        summary = summary_for(steam_min, dota_min, len(wk))
         res = upsert_event(calendar, uid_for(wm), summary, sunday_of(wm))
         print(f"[backfill] {wm_str}: Steam={steam_min}м Dota={dota_min}м ({len(wk)} матч) → '{summary}' {res}")
 
@@ -260,18 +260,18 @@ def _healthcheck_ping(cfg):
 
 
 def _dota_week_minutes(cfg, week_monday):
-    """Время в матчах за неделю (OpenDota, включая Turbo). None если недоступно."""
+    """(минуты, число матчей) за неделю (OpenDota, с Turbo). (None, 0) если недоступно."""
     if not cfg.get("STEAM_ID64"):
-        return None
+        return None, 0
     try:
         from dota import match_minutes_since
         since = _week_start_unix(week_monday)
         minutes, count = match_minutes_since(cfg["STEAM_ID64"], since)
         print(f"[dota] неделя {week_monday.isoformat()}: {count} матч(ей) → {minutes} мин")
-        return minutes
+        return minutes, count
     except Exception as e:  # noqa: BLE001 — Dota-число вторично, джоб не валим
         print(f"[dota] недоступно, показываю только Steam: {e}")
-        return None
+        return None, 0
 
 
 def plan_settle(forever, state, today):
@@ -337,11 +337,11 @@ def run_settle(cfg):
     new_state, ops = plan_settle(forever, st, today)
 
     week_monday = date.fromisoformat(new_state["current_week_monday"])
-    dota_min = _dota_week_minutes(cfg, week_monday)
+    dota_min, dota_cnt = _dota_week_minutes(cfg, week_monday)
 
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
     for uid, steam_min, sunday in ops:
-        summary = summary_for(steam_min, dota_min)
+        summary = summary_for(steam_min, dota_min, dota_cnt)
         res = upsert_event(calendar, uid, summary, sunday)
         print(f"[settle] {uid}: '{summary}' -> {res}")
 
@@ -384,10 +384,10 @@ def run_live(cfg):
     forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
     uid, steam_min, sunday, delta = plan_live(forever, st)
     week_monday = sunday - timedelta(days=6)
-    dota_min = _dota_week_minutes(cfg, week_monday)
+    dota_min, dota_cnt = _dota_week_minutes(cfg, week_monday)
 
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
-    summary = summary_for(steam_min, dota_min)
+    summary = summary_for(steam_min, dota_min, dota_cnt)
     res = upsert_event(calendar, uid, summary, sunday)
     print(f"[live] {uid}: '{summary}' (delta={delta}); событие={res}")
     # baseline и state НЕ трогаем, не коммитим.

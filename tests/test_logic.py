@@ -139,9 +139,10 @@ def test_fmt_and_summary():
     assert m.fmt_hm(630) == "10:30"
     assert m.fmt_hm(-5) == "0:00"
     assert m.summary_for(280) == "🎮 Dota 4:40"
-    assert m.summary_for(280, 130) == "🎮 Dota 4:40 (2:10)"
-    assert m.summary_for(280, 0) == "🎮 Dota 4:40"       # 0 матчей → без скобок
-    assert m.summary_for(280, None) == "🎮 Dota 4:40"
+    assert m.summary_for(280, 130, 5) == "🎮 Dota 4:40 (2:10, 5s)"
+    assert m.summary_for(622, 409, 18) == "🎮 Dota 10:22 (6:49, 18s)"
+    assert m.summary_for(280, 0, 0) == "🎮 Dota 4:40"     # 0 матчей → без скобок
+    assert m.summary_for(280, None, 0) == "🎮 Dota 4:40"
 
 
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
