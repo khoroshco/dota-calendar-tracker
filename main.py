@@ -212,6 +212,41 @@ def run_dota(cfg):
               "(Dota 2 → Settings → Options), либо матчи скрыты.")
 
 
+def run_backfill(cfg):
+    """Проставить Dota-цифру в события ПРОШЛЫХ (архивных) недель. Текущую ведёт live/settle.
+
+    Ручной разовый режим: читает history, тянет матчи (significant=0 → с Turbo),
+    раскладывает по недельным окнам и обновляет каждое событие. State не трогает.
+    """
+    require(cfg, _GAME_SECRETS)
+    from caldav_sink import get_calendar, upsert_event
+    from dota import get_matches
+
+    st = state_mod.load_state()
+    weeks = [(h["week_monday"], h["minutes"]) for h in st.get("history", [])]
+    if not weeks:
+        print("[backfill] history пуст — нечего бэкфилить")
+        return
+
+    try:
+        matches = get_matches(cfg["STEAM_ID64"], days=50)
+        print(f"[backfill] матчей из OpenDota (50 дней, с Turbo): {len(matches)}")
+    except Exception as e:  # noqa: BLE001 — не трогаем события, если Dota недоступна
+        print(f"[backfill] OpenDota недоступен, прерываю: {e}")
+        return
+
+    calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
+    for wm_str, steam_min in weeks:
+        wm = date.fromisoformat(wm_str)
+        start = _week_start_unix(wm)
+        end = _week_start_unix(wm + timedelta(days=7))
+        wk = [m for m in matches if start <= (m.get("start_time") or 0) < end]
+        dota_min = sum(m.get("duration", 0) for m in wk) // 60
+        summary = summary_for(steam_min, dota_min)
+        res = upsert_event(calendar, uid_for(wm), summary, sunday_of(wm))
+        print(f"[backfill] {wm_str}: Steam={steam_min}м Dota={dota_min}м ({len(wk)} матч) → '{summary}' {res}")
+
+
 def _healthcheck_ping(cfg):
     url = cfg.get("HEALTHCHECK_URL")
     if not url:
@@ -360,7 +395,7 @@ def run_live(cfg):
 
 def parse_args(argv):
     p = argparse.ArgumentParser(description="Dota 2 → Apple Calendar tracker")
-    p.add_argument("--mode", choices=["settle", "live", "test", "steam", "dump", "dota"], default=None,
+    p.add_argument("--mode", choices=["settle", "live", "test", "steam", "dump", "dota", "backfill"], default=None,
                    help="Принудительный режим. Иначе: INPUT_MODE / GITHUB_SCHEDULE.")
     return p.parse_args(argv)
 
@@ -384,6 +419,8 @@ def main(argv=None):
         run_dump(cfg)
     elif mode == "dota":
         run_dota(cfg)
+    elif mode == "backfill":
+        run_backfill(cfg)
     else:
         raise SystemExit(f"[fatal] неизвестный режим: {mode}")
 

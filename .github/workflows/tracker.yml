@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "settle | live | test | steam | dump | dota"
+        description: "settle | live | test | steam | dump | dota | backfill"
         default: "test"
         required: true
 
