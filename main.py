@@ -247,6 +247,59 @@ def run_backfill(cfg):
         print(f"[backfill] {wm_str}: Steam={steam_min}м Dota={dota_min}м ({len(wk)} матч) → '{summary}' {res}")
 
 
+def run_yearfill(cfg):
+    """Создать Dota-only события (по OpenDota) для недель этого года ДО старта трекера.
+
+    Формат '🎮 Dota (6:49)' — только время в матчах, без Steam. Недели, что уже
+    ведёт трекер (есть в state), не трогаем. Матч → неделя по окну [Пн 05:00 → Пн 05:00].
+    State не меняется.
+    """
+    require(cfg, _GAME_SECRETS)
+    from collections import defaultdict
+    from caldav_sink import get_calendar, upsert_event
+    from dota import get_matches
+
+    st = state_mod.load_state()
+    tracked = {h["week_monday"] for h in st.get("history", [])}
+    if state_mod.is_initialized(st):
+        tracked.add(st["current_week_monday"])
+    first_tracked = min(tracked) if tracked else None
+    year_start = date(now_msk().year, 1, 1)
+
+    matches = get_matches(cfg["STEAM_ID64"], days=220)
+    print(f"[yearfill] матчей из OpenDota (220 дней): {len(matches)}")
+
+    buckets = defaultdict(lambda: [0, 0])  # week_monday_iso -> [seconds, count]
+    for mm in matches:
+        stime, dur = mm.get("start_time"), mm.get("duration")
+        if stime is None or dur is None:
+            continue
+        dt = datetime.fromtimestamp(stime, MSK)
+        gday = dt.date() if dt.hour >= 5 else dt.date() - timedelta(days=1)  # окно 05:00
+        wm = monday_of(gday)
+        if wm < year_start:
+            continue
+        if first_tracked and wm.isoformat() >= first_tracked:
+            continue  # эти недели ведёт трекер (полный формат) — не трогаем
+        b = buckets[wm.isoformat()]
+        b[0] += dur
+        b[1] += 1
+
+    if not buckets:
+        print("[yearfill] нет до-трекерных недель с матчами в этом году")
+        return
+
+    calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
+    for wm_iso in sorted(buckets):
+        wm = date.fromisoformat(wm_iso)
+        sec, cnt = buckets[wm_iso]
+        dota_min = sec // 60
+        summary = f"🎮 Dota ({fmt_hm(dota_min)})"
+        res = upsert_event(calendar, uid_for(wm), summary, sunday_of(wm))
+        print(f"[yearfill] {wm_iso}: {dota_min}м ({cnt} матч) → '{summary}' {res}")
+    print(f"[yearfill] недель создано/обновлено: {len(buckets)}")
+
+
 def _healthcheck_ping(cfg):
     url = cfg.get("HEALTHCHECK_URL")
     if not url:
@@ -395,7 +448,9 @@ def run_live(cfg):
 
 def parse_args(argv):
     p = argparse.ArgumentParser(description="Dota 2 → Apple Calendar tracker")
-    p.add_argument("--mode", choices=["settle", "live", "test", "steam", "dump", "dota", "backfill"], default=None,
+    p.add_argument("--mode",
+                   choices=["settle", "live", "test", "steam", "dump", "dota", "backfill", "yearfill"],
+                   default=None,
                    help="Принудительный режим. Иначе: INPUT_MODE / GITHUB_SCHEDULE.")
     return p.parse_args(argv)
 
@@ -421,6 +476,8 @@ def main(argv=None):
         run_dota(cfg)
     elif mode == "backfill":
         run_backfill(cfg)
+    elif mode == "yearfill":
+        run_yearfill(cfg)
     else:
         raise SystemExit(f"[fatal] неизвестный режим: {mode}")
 
