@@ -52,11 +52,15 @@ def uid_for(monday):
 
 def fmt_hm(total_minutes):
     h, m = divmod(max(0, int(total_minutes)), 60)
-    return f"{h} ч {m} м"
+    return f"{h}:{m:02d}"
 
 
-def summary_for(minutes):
-    return f"🎮 Dota: {fmt_hm(minutes)}"
+def summary_for(steam_minutes, dota_minutes=None):
+    """'🎮 Dota 4:40' или '🎮 Dota 4:40 (2:10)'. Скобки — только если есть матчи."""
+    s = f"🎮 Dota {fmt_hm(steam_minutes)}"
+    if dota_minutes:  # None или 0 → без скобок (пока Dota не отдала матчи)
+        s += f" ({fmt_hm(dota_minutes)})"
+    return s
 
 
 def utcnow_iso():
@@ -220,6 +224,21 @@ def _healthcheck_ping(cfg):
         print(f"[healthcheck] ping не удался (не критично): {e}")
 
 
+def _dota_week_minutes(cfg, week_monday):
+    """Время в матчах за неделю (OpenDota, включая Turbo). None если недоступно."""
+    if not cfg.get("STEAM_ID64"):
+        return None
+    try:
+        from dota import match_minutes_since
+        since = _week_start_unix(week_monday)
+        minutes, count = match_minutes_since(cfg["STEAM_ID64"], since)
+        print(f"[dota] неделя {week_monday.isoformat()}: {count} матч(ей) → {minutes} мин")
+        return minutes
+    except Exception as e:  # noqa: BLE001 — Dota-число вторично, джоб не валим
+        print(f"[dota] недоступно, показываю только Steam: {e}")
+        return None
+
+
 def plan_settle(forever, state, today):
     """Чистая truth-логика settle: (forever, state, today) → (new_state, ops).
 
@@ -238,7 +257,7 @@ def plan_settle(forever, state, today):
             "history": [],
             "last_settle_utc": utcnow_iso(),
         }
-        return new, [(new["current_week_event_uid"], summary_for(0), sunday_of(mon))]
+        return new, [(new["current_week_event_uid"], 0, sunday_of(mon))]
 
     st = copy.deepcopy(state)
     ops = []
@@ -261,11 +280,11 @@ def plan_settle(forever, state, today):
         st["current_week_monday"] = new_mon.isoformat()
         st["current_week_minutes"] = 0
         st["current_week_event_uid"] = uid_for(new_mon)
-        ops.append((st["current_week_event_uid"], summary_for(0), sunday_of(new_mon)))
+        ops.append((st["current_week_event_uid"], 0, sunday_of(new_mon)))
 
     st["current_week_minutes"] += delta
     cur_mon = date.fromisoformat(st["current_week_monday"])
-    ops.append((st["current_week_event_uid"], summary_for(st["current_week_minutes"]), sunday_of(cur_mon)))
+    ops.append((st["current_week_event_uid"], st["current_week_minutes"], sunday_of(cur_mon)))
     st["settle_baseline_forever"] = forever
     st["last_settle_utc"] = utcnow_iso()
     return st, ops
@@ -282,8 +301,12 @@ def run_settle(cfg):
     today = now_msk().date()
     new_state, ops = plan_settle(forever, st, today)
 
+    week_monday = date.fromisoformat(new_state["current_week_monday"])
+    dota_min = _dota_week_minutes(cfg, week_monday)
+
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
-    for uid, summary, sunday in ops:
+    for uid, steam_min, sunday in ops:
+        summary = summary_for(steam_min, dota_min)
         res = upsert_event(calendar, uid, summary, sunday)
         print(f"[settle] {uid}: '{summary}' -> {res}")
 
@@ -294,7 +317,7 @@ def run_settle(cfg):
 
 
 def plan_live(forever, state):
-    """Чистая логика live → (uid, summary, sunday, provisional, delta). Без I/O.
+    """Чистая логика live → (uid, steam_minutes, sunday, delta). Без I/O.
 
     Якорь недели — дата ПОСЛЕДНЕГО settle (день открытого окна), а не календарное
     «сегодня»: устойчиво к джиттеру крона (см. _last_settle_date_msk).
@@ -310,7 +333,7 @@ def plan_live(forever, state):
         # пишем в её событие (создастся), прошлую неделю не трогаем.
         provisional = delta
         uid = uid_for(open_monday)
-    return uid, summary_for(provisional), sunday_of(open_monday), provisional, delta
+    return uid, provisional, sunday_of(open_monday), delta
 
 
 def run_live(cfg):
@@ -324,11 +347,14 @@ def run_live(cfg):
         return
 
     forever = get_playtime_forever(cfg["STEAM_API_KEY"], cfg["STEAM_ID64"])
-    uid, summary, sunday, provisional, delta = plan_live(forever, st)
+    uid, steam_min, sunday, delta = plan_live(forever, st)
+    week_monday = sunday - timedelta(days=6)
+    dota_min = _dota_week_minutes(cfg, week_monday)
 
     calendar = get_calendar(cfg["APPLE_ID"], cfg["APPLE_APP_PASSWORD"], cfg["ICLOUD_CALENDAR_NAME"])
+    summary = summary_for(steam_min, dota_min)
     res = upsert_event(calendar, uid, summary, sunday)
-    print(f"[live] {uid}: провизорно {provisional} мин (delta={delta}); событие={res}")
+    print(f"[live] {uid}: '{summary}' (delta={delta}); событие={res}")
     # baseline и state НЕ трогаем, не коммитим.
 
 

@@ -34,7 +34,7 @@ def test_init_seeds_baseline_and_creates_event():
     assert new["current_week_minutes"] == 0
     assert new["current_week_event_uid"] == "dota-week-2026-06-15@tracker"
     assert new["daily"] == {} and new["history"] == []
-    assert ops == [("dota-week-2026-06-15@tracker", "🎮 Dota: 0 ч 0 м", date(2026, 6, 21))]
+    assert ops == [("dota-week-2026-06-15@tracker", 0, date(2026, 6, 21))]
 
 
 def test_delta_accumulates_midweek():
@@ -43,7 +43,7 @@ def test_delta_accumulates_midweek():
     assert new["current_week_minutes"] == 90
     assert new["settle_baseline_forever"] == 130
     assert new["history"] == []                  # без ролловера
-    assert ops == [("dota-week-2026-06-15@tracker", "🎮 Dota: 1 ч 30 м", date(2026, 6, 21))]
+    assert ops == [("dota-week-2026-06-15@tracker", 90, date(2026, 6, 21))]
 
 
 def test_delta_clamped_to_zero_on_playtime_reset():
@@ -62,8 +62,8 @@ def test_week_rollover_archives_old_and_starts_new():
     assert new["current_week_minutes"] == 60     # дельта пн → в НОВУЮ неделю
     assert new["daily"]["2026-06-15"] == 60
     assert len(ops) == 2
-    assert ops[0] == ("dota-week-2026-06-15@tracker", "🎮 Dota: 0 ч 0 м", date(2026, 6, 21))
-    assert ops[1] == ("dota-week-2026-06-15@tracker", "🎮 Dota: 1 ч 0 м", date(2026, 6, 21))
+    assert ops[0] == ("dota-week-2026-06-15@tracker", 0, date(2026, 6, 21))
+    assert ops[1] == ("dota-week-2026-06-15@tracker", 60, date(2026, 6, 21))
 
 
 def test_late_sunday_session_stays_in_ending_week():
@@ -74,7 +74,7 @@ def test_late_sunday_session_stays_in_ending_week():
     assert new["current_week_monday"] == "2026-06-15"
     assert new["daily"]["2026-06-21"] == 90
     assert new["current_week_minutes"] == 490
-    assert ops == [("dota-week-2026-06-15@tracker", "🎮 Dota: 8 ч 10 м", date(2026, 6, 21))]
+    assert ops == [("dota-week-2026-06-15@tracker", 490, date(2026, 6, 21))]
 
 
 def test_multiday_gap_attributed_to_single_day():
@@ -97,10 +97,9 @@ def test_plan_settle_does_not_mutate_input_state():
 def test_live_midweek_includes_today():
     # последний settle — ср 17-го (та же неделя 15-го)
     st = _week_state("2026-06-15", 60, last_settle="2026-06-17T06:45:00Z")
-    uid, summary, sunday, prov, delta = m.plan_live(130, st)
+    uid, steam_min, sunday, delta = m.plan_live(130, st)
     assert uid == "dota-week-2026-06-15@tracker"
-    assert prov == 90 and delta == 30
-    assert summary == "🎮 Dota: 1 ч 30 м"
+    assert steam_min == 90 and delta == 30
     assert sunday == date(2026, 6, 21)
 
 
@@ -108,10 +107,9 @@ def test_live_monday_boundary_writes_new_week_not_last():
     # settle прошёл в пн 22-го (атрибутировал вс, без ролловера) → открытое окно
     # уже в новой неделе; сегодня → событие вс 28-го, прошлые 490 НЕ попадают.
     st = _week_state("2026-06-15", 490, last_settle="2026-06-22T07:14:00Z")
-    uid, summary, sunday, prov, delta = m.plan_live(130, st)
+    uid, steam_min, sunday, delta = m.plan_live(130, st)
     assert uid == "dota-week-2026-06-22@tracker"
-    assert prov == 30
-    assert summary == "🎮 Dota: 0 ч 30 м"
+    assert steam_min == 30
     assert sunday == date(2026, 6, 28)
 
 
@@ -120,26 +118,30 @@ def test_live_jitter_after_midnight_stays_in_ending_week():
     # settle ещё НЕ прошёл → последний settle = вс 21-го → открытое окно ещё в
     # неделе 15-го. Поздняя вс-сессия (57 м) идёт в вс-21, НЕ в новую неделю.
     st = _week_state("2026-06-15", 121, baseline=404189, last_settle="2026-06-21T06:45:13Z")
-    uid, summary, sunday, prov, delta = m.plan_live(404246, st)
+    uid, steam_min, sunday, delta = m.plan_live(404246, st)
     assert uid == "dota-week-2026-06-15@tracker"   # прошлая неделя, НЕ june-22
-    assert delta == 57 and prov == 178             # 121 + 57
+    assert delta == 57 and steam_min == 178        # 121 + 57
     assert sunday == date(2026, 6, 21)
 
 
 def test_live_clamps_negative_delta():
     st = _week_state("2026-06-15", 100, baseline=120, last_settle="2026-06-17T06:45:00Z")
-    uid, summary, sunday, prov, delta = m.plan_live(80, st)
-    assert delta == 0 and prov == 100              # forever<baseline → только неделя
+    uid, steam_min, sunday, delta = m.plan_live(80, st)
+    assert delta == 0 and steam_min == 100         # forever<baseline → только неделя
 
 
 # ---------- формат ----------
 
-def test_fmt_hm():
-    assert m.fmt_hm(0) == "0 ч 0 м"
-    assert m.fmt_hm(59) == "0 ч 59 м"
-    assert m.fmt_hm(630) == "10 ч 30 м"
-    assert m.fmt_hm(-5) == "0 ч 0 м"
-    assert m.summary_for(125) == "🎮 Dota: 2 ч 5 м"
+def test_fmt_and_summary():
+    assert m.fmt_hm(0) == "0:00"
+    assert m.fmt_hm(59) == "0:59"
+    assert m.fmt_hm(280) == "4:40"
+    assert m.fmt_hm(630) == "10:30"
+    assert m.fmt_hm(-5) == "0:00"
+    assert m.summary_for(280) == "🎮 Dota 4:40"
+    assert m.summary_for(280, 130) == "🎮 Dota 4:40 (2:10)"
+    assert m.summary_for(280, 0) == "🎮 Dota 4:40"       # 0 матчей → без скобок
+    assert m.summary_for(280, None) == "🎮 Dota 4:40"
 
 
 _TESTS = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
