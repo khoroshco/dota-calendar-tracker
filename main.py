@@ -177,23 +177,35 @@ def run_dump(cfg):
 
 
 def run_dota(cfg):
-    """Диагностика: время в реальных матчах за текущую неделю (OpenDota)."""
+    """Диагностика: профиль + история матчей (OpenDota), время за текущую неделю."""
     require(cfg, ["STEAM_ID64"])
-    from dota import account_id_from_steamid64, get_matches
+    from dota import account_id_from_steamid64, get_matches, get_profile
 
     st = state_mod.load_state()
     week_monday = (date.fromisoformat(st["current_week_monday"])
                    if state_mod.is_initialized(st) else monday_of(now_msk().date()))
     since = _week_start_unix(week_monday)
     acc = account_id_from_steamid64(cfg["STEAM_ID64"])
-    matches = get_matches(cfg["STEAM_ID64"], days=8)
-    print(f"[dota] account_id={acc}; матчей за 8 дней: {len(matches)}")
-    wk = [m for m in matches if (m.get("start_time") or 0) >= since]
+
+    try:
+        prof = get_profile(cfg["STEAM_ID64"]).get("profile") or {}
+        print(f"[dota] account_id={acc}; профиль OpenDota: personaname={prof.get('personaname')!r}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[dota] account_id={acc}; профиль недоступен: {e}")
+
+    allm = get_matches(cfg["STEAM_ID64"], days=400)
+    print(f"[dota] матчей за 400 дней: {len(allm)}")
+    if allm:
+        latest = max((m.get("start_time") or 0) for m in allm)
+        print(f"[dota] последний матч: {datetime.fromtimestamp(latest, timezone.utc).isoformat()}")
+
+    wk = [m for m in allm if (m.get("start_time") or 0) >= since]
     wk_min = sum(m.get("duration", 0) for m in wk) // 60
-    print(f"[dota] с {week_monday.isoformat()} 05:00 МСК: {len(wk)} матч(ей), "
-          f"{wk_min} мин = {fmt_hm(wk_min)}")
-    if not matches:
-        print("[dota] пусто — включи в Dota 2: Settings → Options → 'Expose Public Match Data'")
+    print(f"[dota] текущая неделя (с {week_monday.isoformat()} 05:00 МСК): "
+          f"{len(wk)} матч(ей), {wk_min} мин = {fmt_hm(wk_min)}")
+    if not allm:
+        print("[dota] за год ноль матчей → скорее всего выключен 'Expose Public Match Data' "
+              "(Dota 2 → Settings → Options), либо матчи скрыты.")
 
 
 def _healthcheck_ping(cfg):

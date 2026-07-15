@@ -51,6 +51,16 @@ def get_matches(steam_id64, *, days=8, timeout=30, attempts=4):
     raise DotaError(f"OpenDota недоступен после {attempts} попыток: {last_err}")
 
 
+def get_profile(steam_id64, *, timeout=30):
+    """Профиль игрока в OpenDota (personaname и пр.). Пустой 'profile' → нет данных."""
+    import requests
+
+    account_id = account_id_from_steamid64(steam_id64)
+    resp = requests.get(f"{_BASE}/players/{account_id}", timeout=timeout)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def match_minutes_since(steam_id64, since_unix, *, days=8):
     """Сумма длительностей матчей (мин) и их число, начавшихся в [since_unix, ∞)."""
     matches = get_matches(steam_id64, days=days)
