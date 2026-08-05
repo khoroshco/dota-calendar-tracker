@@ -230,9 +230,13 @@ def run_backfill(cfg):
         print("[backfill] history пуст — нечего бэкфилить")
         return
 
+    # Окно OpenDota должно покрывать САМУЮ СТАРУЮ неделю, иначе ранние недели урежутся
+    # (окно `date` относительно now — при росте history фиксированное значение отстаёт).
+    oldest = min(date.fromisoformat(wm) for wm, _ in weeks)
+    days = min(400, (now_msk().date() - oldest).days + 10)
     try:
-        matches = get_matches(cfg["STEAM_ID64"], days=50)
-        print(f"[backfill] матчей из OpenDota (50 дней, с Turbo): {len(matches)}")
+        matches = get_matches(cfg["STEAM_ID64"], days=days)
+        print(f"[backfill] матчей из OpenDota ({days} дней, с Turbo): {len(matches)}")
     except Exception as e:  # noqa: BLE001 — не трогаем события, если Dota недоступна
         print(f"[backfill] OpenDota недоступен, прерываю: {e}")
         return
@@ -268,8 +272,9 @@ def run_yearfill(cfg):
     first_tracked = min(tracked) if tracked else None
     year_start = date(now_msk().year, 1, 1)
 
-    matches = get_matches(cfg["STEAM_ID64"], days=220)
-    print(f"[yearfill] матчей из OpenDota (220 дней): {len(matches)}")
+    days = min(400, (now_msk().date() - year_start).days + 10)  # покрыть начало года
+    matches = get_matches(cfg["STEAM_ID64"], days=days)
+    print(f"[yearfill] матчей из OpenDota ({days} дней): {len(matches)}")
 
     buckets = defaultdict(lambda: [0, 0])  # week_monday_iso -> [seconds, count]
     for mm in matches:
