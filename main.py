@@ -56,11 +56,13 @@ def fmt_hm(total_minutes):
 
 
 def summary_for(steam_minutes, dota_minutes=None, dota_count=0):
-    """'🎮 Dota 4:40' или '🎮 Dota 4:40 (2:10, 18s)' (s = число матчей-сессий)."""
-    s = f"🎮 Dota {fmt_hm(steam_minutes)}"
-    if dota_count:  # есть матчи → (время в матчах, N сессий)
-        s += f" ({fmt_hm(dota_minutes)}, {dota_count}s)"
-    return s
+    """'🎮 Dota 6:49 (10:22, 18s)' — дота-время впереди, Steam+матчи в скобках.
+
+    Без матчей → '🎮 Dota 4:40' (только Steam). s = число матчей-сессий.
+    """
+    if dota_count:  # есть матчи → дота впереди, (Steam, N сессий) в скобках
+        return f"🎮 Dota {fmt_hm(dota_minutes)} ({fmt_hm(steam_minutes)}, {dota_count}s)"
+    return f"🎮 Dota {fmt_hm(steam_minutes)}"
 
 
 def utcnow_iso():
