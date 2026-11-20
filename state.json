@@ -1,6 +1,6 @@
 {
   "current_week_event_uid": "dota-week-2026-11-16@tracker",
-  "current_week_minutes": 217,
+  "current_week_minutes": 363,
   "current_week_monday": "2026-11-16",
   "daily": {
     "2026-07-27": 98,
@@ -103,7 +103,8 @@
     "2026-11-15": 122,
     "2026-11-16": 71,
     "2026-11-17": 75,
-    "2026-11-18": 71
+    "2026-11-18": 71,
+    "2026-11-19": 146
   },
   "history": [
     {
@@ -187,6 +188,6 @@
       "week_monday": "2026-11-09"
     }
   ],
-  "last_settle_utc": "2026-11-19T09:41:17Z",
-  "settle_baseline_forever": 418237
+  "last_settle_utc": "2026-11-20T09:28:56Z",
+  "settle_baseline_forever": 418383
 }
